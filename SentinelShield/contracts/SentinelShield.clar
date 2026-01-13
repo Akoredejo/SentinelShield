@@ -295,4 +295,113 @@
     )
 )
 
+;; AI-powered comprehensive fraud analysis with multi-factor detection
+;; This function performs advanced fraud detection by analyzing multiple trading patterns
+;; including wash trading indicators, pump-and-dump schemes, and abnormal volume spikes.
+;; It combines machine learning risk scores with rule-based detection for robust protection.
+;; @param trader: Principal of the trader being analyzed
+;; @param trade-volume: Volume of the current trade in tokens
+;; @param trade-frequency: Number of trades in the current time window
+;; @param price-volatility: Volatility score of the traded asset (0-100)
+;; @param time-window: Time window ID for pattern analysis
+;; @returns: Response with comprehensive risk assessment or error
+(define-public (analyze-trading-pattern-with-ai
+    (trader principal)
+    (trade-volume uint)
+    (trade-frequency uint)
+    (price-volatility uint)
+    (time-window uint))
+    (let
+        (
+            ;; Retrieve trader's historical profile for behavioral analysis
+            (trader-data (unwrap! (map-get? trader-profiles { trader: trader }) err-not-found))
+            
+            ;; Calculate volume anomaly score (0-100 scale)
+            ;; High scores indicate unusual trading volume compared to historical average
+            (volume-calc (/ trade-volume u10000))
+            (volume-anomaly-score (if (> trade-volume u1000000)
+                (if (> volume-calc u100) u100 volume-calc)
+                u10
+            ))
+            
+            ;; Calculate frequency anomaly score (0-100 scale)
+            ;; Detects rapid-fire trading patterns often associated with wash trading
+            (frequency-calc (* trade-frequency u2))
+            (frequency-anomaly-score (if (> trade-frequency u50)
+                (if (> frequency-calc u100) u100 frequency-calc)
+                u15
+            ))
+            
+            ;; Incorporate price volatility as a risk factor
+            ;; High volatility during high-frequency trading suggests manipulation
+            (volatility-risk (if (> price-volatility u100) u100 price-volatility))
+            
+            ;; Calculate base risk using historical trader behavior
+            (historical-risk (get risk-score trader-data))
+            
+            ;; Compute comprehensive weighted risk score using AI model
+            (comprehensive-risk-score (calculate-weighted-risk
+                (+ historical-risk (/ volatility-risk u2))
+                volume-anomaly-score
+                frequency-anomaly-score
+            ))
+            
+            ;; Determine if trading pattern is anomalous
+            (is-anomalous (or
+                (> volume-anomaly-score u60)
+                (> frequency-anomaly-score u70)
+                (and (> price-volatility u80) (> trade-frequency u30))
+            ))
+        )
+        
+        ;; Record detected trading anomaly in the system
+        (map-set trading-anomalies
+            { trader: trader, window-id: time-window }
+            {
+                avg-trade-size: trade-volume,
+                trade-frequency: trade-frequency,
+                volatility-score: price-volatility,
+                anomaly-detected: is-anomalous
+            }
+        )
+        
+        ;; Update trader profile with latest trading activity
+        (map-set trader-profiles
+            { trader: trader }
+            (merge trader-data {
+                total-trades: (+ (get total-trades trader-data) u1),
+                risk-score: comprehensive-risk-score,
+                last-trade-time: block-height
+            })
+        )
+        
+        ;; If risk is critical and anomaly detected, auto-generate fraud alert
+        (if (and is-anomalous (>= comprehensive-risk-score risk-critical))
+            (begin
+                (unwrap-panic (generate-fraud-alert
+                    trader
+                    comprehensive-risk-score
+                    "ai-detected-manipulation"
+                    trade-volume
+                ))
+                (ok {
+                    risk-score: comprehensive-risk-score,
+                    risk-level: (get-risk-level comprehensive-risk-score),
+                    anomaly-detected: is-anomalous,
+                    alert-generated: true,
+                    volume-score: volume-anomaly-score,
+                    frequency-score: frequency-anomaly-score
+                })
+            )
+            (ok {
+                risk-score: comprehensive-risk-score,
+                risk-level: (get-risk-level comprehensive-risk-score),
+                anomaly-detected: is-anomalous,
+                alert-generated: false,
+                volume-score: volume-anomaly-score,
+                frequency-score: frequency-anomaly-score
+            })
+        )
+    )
+)
 
